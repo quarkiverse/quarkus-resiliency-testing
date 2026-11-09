@@ -1,0 +1,10 @@
+name: Resiliency Testing - CXF Client
+description: Network fault targets for CXF Client
+metadata:
+  keywords:
+    - testing
+    - fault-injection
+  categories:
+    - "miscellaneous"
+  status: "experimental"
+  unlisted: true

@@ -56,12 +56,16 @@ This extension makes the dependency fail on purpose, inside the test JVM.
 
 == What Can You Test?
 
-Any outbound connection the extension recognises in the configuration can be faulted: REST Clients, JDBC and reactive datasources, Redis, MongoDB, mailers, GraphQL and gRPC clients, and Quarkus LangChain4j models, stores and MCP servers.
+Any outbound connection the extension recognises in the configuration can be faulted: REST Clients, Quarkus CXF SOAP clients,
+JDBC and reactive datasources, Redis, MongoDB, mailers, GraphQL and gRPC clients, and Quarkus LangChain4j models, stores and MCP servers.
 
 Use it to check:
 
 [.lead]
 *A REST dependency that is down, hangs or cannot be reached*, and with it the `@Fallback`, the `@Timeout` and the connect and read timeouts of the client.
+
+[.lead]
+*A SOAP dependency that is down, hangs or cannot be reached*, and with it the connection and receive timeouts of a Quarkus CXF client.
 
 [.lead]
 *A remote API that answers with an error status*, such as a `429` or a `503`, for every request or only for the first few.

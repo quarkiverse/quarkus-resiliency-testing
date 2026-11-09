@@ -29,6 +29,7 @@
         <module>mongodb</module>
         <module>mailer</module>
         <module>vertx</module>
+        <module>cxf</module>
     </modules>
 
     <build>

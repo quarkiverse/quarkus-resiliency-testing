@@ -40,6 +40,9 @@ Pass the type and the qualifiers the application would inject:
 |REST Client
 |`faults.target(InventoryClient.class)`; the `@RestClient` qualifier is implied by the interface
 
+|Quarkus CXF SOAP client
+|`faults.target(SoapService.class)` for an unambiguously resolved non-alternative client, or `faults.target(HelloSoapService.class, new CXFClientLiteral("client"))` to select a named client
+
 |JDBC datasource
 |`faults.target(DataSource.class)` for the default one, `faults.target(DataSource.class, new DataSourceLiteral("users"))` for a named one
 
@@ -142,6 +145,9 @@ NOTE: A registry name such as `datasource:<default>:jdbc` cannot be used to sele
 
 |`quarkus.grpc.clients.<name>.host`, `.port`, `.test-port`
 |`grpc-client:<name>`
+
+|`quarkus.cxf.client.<name>.client-endpoint-url`
+|`cxf:<name>`
 |===
 
 `Faults` itself knows nothing about datasources or REST Clients.
@@ -154,6 +160,71 @@ Its URL may be configured under its `configKey`, its class name or its simple na
 A URL that comes from `+@RegisterRestClient(baseUri = ...)+` is proxied as well.
 
 See xref:guide-rest-client.adoc[Testing a failing REST dependency].
+
+== Quarkus CXF SOAP Clients
+
+Quarkus CXF SOAP clients are addressed by their service interface
+and/or their `@CXFClient` qualifier. Specifically the extension supports the following address cases:
+
+[cols="1,1,1",options="header"]
+|===
+|Client |quarkus.cxf.client."client-name".service-interface |quarkus.cxf.client."client-name".client-endpoint-url
+
+|`@CXFClient("clientName")`
+|Present
+|Present
+
+|`@CXFClient("clientName")`
+|Absent
+|Present
+
+|`@CXFClient("clientName")`
+|Present
+|Absent
+
+|`@CXFClient("clientName")`
+|Absent
+|Absent
+
+|`@CXFClient`
+|Present
+|Present
+
+|`@CXFClient`
+|Present
+|Absent
+
+|===
+
+In the tested configuration, an unnamed @CXFClient without a matching, non-alternative service-interface configuration
+cannot resolve the intended named client.
+
+Each named CXF client configuration is registered as an
+independent network target under the `cxf:<client-name>` family.
+
+For a client with an unambiguous, non-alternative service
+interface configuration:
+
+`faults.target(HelloSoapService.class).hangs();`
+
+For a specifically named CXF client:
+
+`faults.target(HelloSoapService.class, new CXFClientLiteral("clientName")).hangs();`
+
+Here, `CXFClientLiteral` is an application-provided
+`AnnotationLiteral<CXFClient>` implementation.
+
+Named clients can share the same service interface while
+remaining independently targetable.
+
+When multiple clients share a service interface, `quarkus.cxf.client."client-name".alternative=true` can be used to exclude additional clients from implicit CXF client selection. These clients remain addressable through their explicit @CXFClient qualifier.
+
+The extension rewrites `quarkus.cxf.client."client-name".client-endpoint-url`
+through the network fault proxy. When this property is omitted, the extension supplies a default URL matching the fallback address calculated by Quarkus CXF.
+
+The service interface can be explicitly configured using
+`quarkus.cxf.client."client-name".service-interface`, or inferred from
+a named `@CXFClient` injection point.
 
 == Datasources
 

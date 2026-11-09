@@ -28,6 +28,7 @@
         <module>hibernate-reactive</module>
         <module>mongodb</module>
         <module>mailer</module>
+        <module>cxf</module>
     </modules>
 
     <dependencies>
