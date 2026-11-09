@@ -2,11 +2,15 @@ package io.quarkiverse.resiliencytesting.kafkaclient.deployment;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import org.jboss.logging.Logger;
+import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
 
 import io.quarkiverse.resiliencytesting.deployment.spi.NetworkFaultTargetBuildItem;
@@ -28,6 +32,8 @@ class KafkaClientTargetsProcessor {
 
     private static final Logger LOG = Logger.getLogger(KafkaClientTargetsProcessor.class);
 
+    private static final String PROXY_PORT_LABEL = "quarkus.resiliency-testing.kafka.proxy-port";
+
     @BuildStep
     NetworkFaultTargetBuildItem target(BuildProducer<DevServicesCustomizerBuildItem> customizers,
             BuildProducer<DevServicesAdditionalConfigBuildItem> additionalConfig) {
@@ -44,20 +50,78 @@ class KafkaClientTargetsProcessor {
 
             int port = AddressUtil.reservePort();
             proxyPort.set(port);
+            container.withLabel(PROXY_PORT_LABEL, Integer.toString(port));
             LOG.infof("network faults: reserved proxy port %d for Kafka broker advertised.listeners", port);
 
             return new KafkaProxyStartable(startable, container, port);
         }));
 
+        String property = KafkaClientTargets.DESCRIPTOR.property();
         additionalConfig.produce(new DevServicesAdditionalConfigBuildItem(devServicesConfig -> {
             int port = proxyPort.get();
+            if (port == 0) {
+                String bootstrapServers = devServicesConfig.get(property);
+                if (bootstrapServers != null) {
+                    port = proxyPortFromContainerLabel(bootstrapServers);
+                }
+            }
             if (port > 0) {
-                return Map.of(TargetDescriptor.RESERVED_PORT_PREFIX + "kafka.bootstrap.servers",
+                return Map.of(TargetDescriptor.RESERVED_PORT_PREFIX + property,
                         Integer.toString(port));
             }
             return Map.of();
         }));
         return new NetworkFaultTargetBuildItem(KafkaClientTargets.DESCRIPTOR);
+    }
+
+    private static int parsePort(String address) {
+        String authority = address;
+        int schemeEnd = authority.indexOf("://");
+        if (schemeEnd >= 0) {
+            authority = authority.substring(schemeEnd + 3);
+        }
+        AddressUtil.HostPort hp = AddressUtil.hostPort(authority, -1);
+        if (hp == null) {
+            return 0;
+        }
+        return hp.port();
+    }
+
+    private static int proxyPortFromContainerLabel(String bootstrapServers) {
+        var containers = DockerClientFactory.lazyClient()
+                .listContainersCmd()
+                .withLabelFilter(List.of(PROXY_PORT_LABEL))
+                .exec();
+        if (containers.isEmpty()) {
+            return 0;
+        }
+        for (String server : bootstrapServers.split(",")) {
+            int kafkaPort = parsePort(server.trim());
+            if (kafkaPort <= 0) {
+                continue;
+            }
+            for (var container : containers) {
+                boolean matchesKafkaPort = container.getPorts() != null &&
+                        Arrays.stream(container.getPorts()).anyMatch(p -> Objects.equals(p.getPublicPort(), kafkaPort));
+                if (!matchesKafkaPort) {
+                    continue;
+                }
+                String value = container.getLabels().get(PROXY_PORT_LABEL);
+                if (value != null) {
+                    try {
+                        int port = Integer.parseInt(value);
+                        LOG.infof("network faults: reusing proxy port %d for restarted application (Kafka container kept)",
+                                port);
+                        return port;
+                    } catch (NumberFormatException e) {
+                        LOG.warnf("network faults: ignoring invalid proxy port label value '%s'", value);
+                    }
+                }
+            }
+        }
+        LOG.debugf("network faults: no running container with label %s matches bootstrap servers %s",
+                PROXY_PORT_LABEL, bootstrapServers);
+        return 0;
     }
 
     private static GenericContainer<?> unwrapContainer(Startable startable) {
