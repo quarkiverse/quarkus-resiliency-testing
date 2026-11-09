@@ -95,7 +95,8 @@ export class QwcFaults extends LitElement {
     }
 
     render() {
-        if (!this._status) {
+        // a target rendered before the fault list arrives would get no default fault, and keep none
+        if (!this._status || !this._faults.length) {
             return html`<span class="hint">Loading…</span>`;
         }
         if (!this._status.enabled) {
