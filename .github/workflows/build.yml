@@ -37,12 +37,15 @@ defaults:
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build on ${{ matrix.os }} with JDK ${{ matrix.java }}
     strategy:
       fail-fast: false
       matrix:
 #        os: [windows-latest, macos-latest, ubuntu-latest]
         os: [ubuntu-latest]
+        # the disk and DNS faults rewrite methods of the JDK, so they are tested against every JDK they claim to
+        # work on: the oldest supported, the latest LTS and the latest release
+        java: [21, 25, 27]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Prepare git
@@ -50,11 +53,11 @@ jobs:
         if: startsWith(matrix.os, 'windows')
 
       - uses: actions/checkout@v6
-      - name: Set up JDK 21
+      - name: Set up JDK ${{ matrix.java }}
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 21
+          java-version: ${{ matrix.java }}
           cache: 'maven'
 
       - name: Build with Maven

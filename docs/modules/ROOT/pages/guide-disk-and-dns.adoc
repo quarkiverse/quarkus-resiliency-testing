@@ -1,0 +1,173 @@
+= Testing a Full Disk and DNS Failures
+
+include::./includes/attributes.adoc[]
+include::./includes/customization.adoc[]
+
+Some failures never reach a connection, so no proxy can produce them.
+A write fails because the disk is full.
+A client fails before it connects because the name of its dependency no longer resolves.
+Both are thrown by the JDK itself, and the extension makes the JDK throw them: for the duration of a block, the write or the lookup fails with the exception the real failure gives.
+
+This guide shows how to test a request when:
+
+* The disk the application writes to is full
+* The host name of a dependency behind a proxy does not resolve
+* A host name the application looks up itself does not resolve
+
+== Prerequisites
+
+The test class injects `Faults`, as described in the xref:quickstart.adoc[Quick start].
+`directory(...)` and `host(...)` need no `NetworkFaultsProfile`.
+An unresolvable target does, as every target does.
+
+There is nothing to add to the build.
+The Quarkus Maven plugin passes the JVM option these faults need to the tests, as it does for Mockito.
+
+== The Disk Is Full
+
+The test shows that the application answers for a write it could not make, and that it writes again once there is room:
+
+* The `507` proves the application caught the `IOException` of a full disk and turned it into an answer of its own, rather than a `500`
+* The `201` after the block, and the content of the file, prove the application recovered without a restart
+
+[source,java]
+----
+@QuarkusTest
+class ReportResourceTest {
+
+    @Inject
+    Faults faults;
+
+    @ConfigProperty(name = "reports.directory")
+    String reports;
+
+    @Test
+    void aReportThatDoesNotFitIsRefused() throws IOException {
+        try (ActiveFault f = faults.directory(Path.of(reports)).diskFull()) { // <1>
+            given()
+                    .body("lost")
+                    .post("/reports")
+                    .then()
+                    .statusCode(507); // <2>
+        }
+
+        given()
+                .body("kept")
+                .post("/reports")
+                .then()
+                .statusCode(201); // <3>
+
+        assertEquals("kept", Files.readString(Path.of(reports, "report.txt")));
+    }
+}
+----
+<1> The fault is on the files under one directory, not on a whole disk. Writes anywhere else succeed, even on the same disk, so the logs of the application and the files of the test are safe.
+<2> `Files.writeString` failed with `IOException: No space left on device`.
+<3> The fault is over: the same write goes through.
+
+[cols="2,3",options="header"]
+|===
+|While the fault is active |What happens
+
+|A write through `FileOutputStream`, `FileWriter`, `RandomAccessFile`
+|`IOException: No space left on device`
+
+|A write through `FileChannel`, `Files.write`, `Files.writeString`, `Files.newOutputStream`, `Files.newBufferedWriter`
+|`IOException: No space left on device`
+
+|`Files.copy` to a file under the directory
+|`FileSystemException` with the reason `No space left on device`
+
+|Creating, opening, reading or deleting a file
+|Works, as on a full disk
+
+|A write to a file under any other directory
+|Works
+|===
+
+IMPORTANT: Writes made by native code, an embedded database for one, and writes through a memory-mapped file are not failed.
+
+IMPORTANT: A path is compared as the application gave it when it opened the file, made absolute. Symbolic links are not followed, so name the directory the way the application does.
+
+== The Host Name of a Dependency Does Not Resolve
+
+The test shows that the client fails on the lookup, not on a timeout, and that it connects again once the name resolves:
+
+* The `503` and the recorded `UnknownHostException` prove the application met the failure of a lookup, and handled it
+* The `201` after the block proves the client did not keep the failure
+
+[source,java]
+----
+@QuarkusTest
+@TestProfile(NetworkFaultsProfile.class)
+class OrderResourceTest {
+
+    @Inject
+    Faults faults;
+
+    @Test
+    void inventoryDoesNotResolve() {
+        Target inventory = faults.target(InventoryClient.class);
+        inventory.dropConnections(); // <1>
+
+        try (ActiveFault f = inventory.unresolvable()) { // <2>
+            when()
+                    .post("/orders")
+                    .then()
+                    .statusCode(503);
+        }
+
+        when()
+                .post("/orders")
+                .then()
+                .statusCode(201);
+    }
+}
+----
+<1> A connection the client keeps alive would carry the next request past the fault: a lookup happens when a connection is opened.
+<2> Every attempt to connect to the target fails with `UnknownHostException`, naming the host the application was configured with.
+
+It works on any target, a datasource included: `faults.target(DataSource.class).unresolvable()`.
+
+IMPORTANT: The application reaches a target through its proxy, by address, so it looks no name up. The fault is raised where the client would connect instead, before a connection is made: the client gets the exception of a failed lookup, without the wait a real name server may add. A client on a native transport, epoll or io_uring, is not failed.
+
+== A Host Name the Application Looks up Does Not Resolve
+
+For a dependency that is not behind a proxy, in a test without the profile or one no extension recognises, the fault goes on the name:
+
+[source,java]
+----
+try (ActiveFault f = faults.host("inventory.example.com").unresolvable()) {
+    when()
+            .post("/orders")
+            .then()
+            .statusCode(503);
+}
+----
+
+Here the lookups themselves fail, in both resolvers a Quarkus application has:
+
+[cols="2,3",options="header"]
+|===
+|Resolver |Used by
+
+|The JDK: `InetAddress`
+|JDBC drivers, `java.net.Socket`, `java.net.http.HttpClient`, the Apache HTTP client
+
+|Netty
+|Vert.x, and with it the REST Client, the reactive SQL clients, Redis, the mailer
+|===
+
+IMPORTANT: The fault is on the name wherever in the JVM it is looked up, the test included. A test calls the application on `localhost` by default, so a test that makes `localhost` unresolvable first sets `RestAssured.baseURI = "http://127.0.0.1"`.
+
+== The Guard
+
+These faults are judged like the others, see xref:guard.adoc[The Guard]: the test fails if nothing wrote to a file under the directory, looked the name up, or tried to connect to the target while the fault was active.
+
+== Going Further
+
+[.lead]
+* xref:faults.adoc[Faults Reference]
+* xref:guard.adoc[The Guard]
+* xref:guide-rest-client.adoc[Testing a failing REST dependency]
+* xref:guide-database.adoc[Testing a failing database]

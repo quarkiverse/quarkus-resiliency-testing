@@ -1,0 +1,10 @@
+{! Included after each rule that throws, with the same CLASS and METHOD: on the way out of the method, the frames
+   of the agent that ran the rule are taken off the exception, so that its stack trace starts at the method, as
+   that of the real failure does. !}
+RULE {fault} {of}: hide the frames of the agent
+CLASS {type}
+METHOD {method}
+AT EXCEPTION EXIT
+IF true
+DO io.quarkiverse.resiliencytesting.runtime.internal.jvm.InjectedFrames.hide($^)
+ENDRULE

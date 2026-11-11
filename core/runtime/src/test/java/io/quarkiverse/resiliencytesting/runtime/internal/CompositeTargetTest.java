@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -26,6 +27,8 @@ import io.quarkiverse.resiliencytesting.ActiveFault;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyRegistry;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyTarget;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.TestUpstream;
+import io.quarkiverse.resiliencytesting.spi.Exhaustion;
+import io.quarkiverse.resiliencytesting.spi.ResourceTarget;
 import io.quarkiverse.resiliencytesting.spi.TargetName;
 import io.quarkiverse.resiliencytesting.spi.Upstream;
 
@@ -187,5 +190,116 @@ class CompositeTargetTest {
         List<String> violations = tracker.takeViolations();
         assertEquals(1, violations.size(), violations.toString());
         assertTrue(violations.getFirst().contains("no POST /reserve request went through"), violations.getFirst());
+    }
+
+    @Test
+    void anUnresolvableTargetFailsConnectsToItsProxyUntilTheFaultEnds() throws Exception {
+        ProxyTarget api = proxy("a");
+        FaultTracker tracker = new FaultTracker(List.of());
+        CompositeTarget target = new CompositeTarget("api:a", List.of(api), tracker);
+        try (ActiveFault f = target.unresolvable()) {
+            UnknownHostException e = assertThrows(UnknownHostException.class, () -> answer(api));
+            // the host the application was configured with, not the proxy it connects to
+            assertEquals("127.0.0.1: Name or service not known", e.getMessage());
+        }
+        assertEquals(REQUEST, answer(api));
+        assertEquals(List.of(), tracker.takeViolations());
+    }
+
+    @Test
+    void anUnresolvableTargetNothingConnectedToFailsTheGuard() {
+        FaultTracker tracker = new FaultTracker(List.of());
+        CompositeTarget target = new CompositeTarget("api:a", List.of(proxy("a")), tracker);
+        target.unresolvable().end();
+        List<String> violations = tracker.takeViolations();
+        assertEquals(1, violations.size(), violations.toString());
+        assertTrue(violations.getFirst().contains("nothing connected to it"), violations.getFirst());
+    }
+
+    @Test
+    void anUnresolvableTargetIsRefusedWhileTheTargetHasANetworkFault() {
+        FaultTracker tracker = new FaultTracker(List.of());
+        CompositeTarget target = new CompositeTarget("api:a", List.of(proxy("a")), tracker);
+        try (ActiveFault f = target.unavailable()) {
+            IllegalStateException refused = assertThrows(IllegalStateException.class, target::unresolvable);
+            assertTrue(refused.getMessage().contains("'unavailable'"), refused.getMessage());
+        }
+    }
+
+    @Test
+    void aNetworkFaultIsRefusedWhileTheTargetIsUnresolvable() {
+        FaultTracker tracker = new FaultTracker(List.of());
+        CompositeTarget target = new CompositeTarget("api:a", List.of(proxy("a")), tracker);
+        try (ActiveFault f = target.unresolvable()) {
+            IllegalStateException refused = assertThrows(IllegalStateException.class, target::unavailable);
+            assertTrue(refused.getMessage().contains("unresolvable"), refused.getMessage());
+            refused = assertThrows(IllegalStateException.class, () -> target.http().requests("GET", "/").hangs());
+            assertTrue(refused.getMessage().contains("unresolvable"), refused.getMessage());
+        }
+        tracker.takeViolations();
+    }
+
+    @Test
+    void anUnresolvableTargetIsRefusedOnAMemberThatIsUnresolvableThroughAnotherTarget() {
+        ProxyTarget first = proxy("a");
+        FaultTracker tracker = new FaultTracker(List.of());
+        CompositeTarget one = new CompositeTarget("api:a", List.of(first), tracker);
+        CompositeTarget both = new CompositeTarget("api", List.of(first, proxy("b")), tracker);
+        try (ActiveFault f = one.unresolvable()) {
+            IllegalStateException refused = assertThrows(IllegalStateException.class, both::unresolvable);
+            assertTrue(refused.getMessage().contains("api:a"), refused.getMessage());
+        }
+        tracker.takeViolations();
+    }
+
+    @Test
+    void anExhaustionIsRefusedWhileTheTargetIsUnresolvable() {
+        FaultTracker tracker = new FaultTracker(List.of());
+        CompositeTarget target = new CompositeTarget("api:a", List.of(proxy("a")), tracker);
+        ResourceTarget pool = new ResourceTarget() {
+            @Override
+            public Exhaustion exhaust() {
+                throw new AssertionError("an unresolvable target must not be exhausted");
+            }
+        };
+        try (ActiveFault f = target.unresolvable()) {
+            assertThrows(IllegalStateException.class, () -> tracker.trackExhaustion("api:a", pool));
+        }
+        tracker.takeViolations();
+    }
+
+    @Test
+    void anUnresolvableTargetIsItsCurrentFaultAndEndsWhenTheTargetIsReset() throws Exception {
+        ProxyTarget api = proxy("a");
+        FaultTracker tracker = new FaultTracker(List.of());
+        CompositeTarget target = new CompositeTarget("api:a", List.of(api), tracker);
+        target.unresolvable();
+        assertEquals("unresolvable", target.currentFault());
+        assertThrows(UnknownHostException.class, () -> answer(api));
+
+        target.reset();
+
+        assertEquals("none", target.currentFault());
+        assertEquals(0, tracker.activeCount());
+        assertEquals(REQUEST, answer(api));
+    }
+
+    @Test
+    void aReplacingTargetSwitchesBetweenUnresolvableAndANetworkFault() throws Exception {
+        ProxyTarget api = proxy("a");
+        FaultTracker tracker = new FaultTracker(List.of());
+        ObservableTarget target = new CompositeTarget("api:a", List.of(api), tracker).replacing();
+
+        target.unresolvable();
+        target.hangs();
+        assertEquals("hangs", target.currentFault());
+
+        target.unresolvable();
+        assertEquals("unresolvable", target.currentFault());
+        assertEquals(1, tracker.activeCount());
+
+        target.reset();
+        tracker.takeViolations();
+        assertEquals(REQUEST, answer(api));
     }
 }

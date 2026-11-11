@@ -103,6 +103,30 @@ A pool is addressed like a target, by the bean the application uses it through: 
 A network fault is refused on a target whose pool is exhausted, and the other way round, with `IllegalStateException`.
 See xref:guide-overload.adoc[Testing overload].
 
+[#jvm-faults]
+== A Full Disk and Unresolvable Hosts
+
+Some failures happen inside the JVM, where no proxy can produce them:
+
+[cols="2,4",options="header"]
+|===
+|Fault |What the application sees
+
+|`directory(path).diskFull()`
+|Every write to a file under the directory fails with `IOException: No space left on device`; files can still be created, read and deleted, and other directories are untouched, even on the same disk
+
+|`host(name).unresolvable()`
+|Every lookup of the name fails with `UnknownHostException`, in the resolver of the JDK and in the one of Netty, which Vert.x uses
+
+|`target(...).unresolvable()`
+|Every attempt to connect to the target fails with `UnknownHostException`, naming the host the application was configured with; live connections keep working
+|===
+
+`directory` and `host` need no `NetworkFaultsProfile`.
+`target(...).unresolvable()` is refused on a target that has a network fault or an exhausted pool, and the other way round, with `IllegalStateException`.
+One directory, host or target takes one such fault at a time.
+See xref:guide-disk-and-dns.adoc[Testing a full disk and DNS failures].
+
 [#moments]
 == Moments
 
@@ -360,6 +384,7 @@ While a target is still exhausted, all of the cleanup waits for the last exhaust
 * xref:targets.adoc[Targets Reference]
 * xref:traffic.adoc[Counting Calls]
 * xref:guide-overload.adoc[Testing overload]
+* xref:guide-disk-and-dns.adoc[Testing a full disk and DNS failures]
 * xref:guard.adoc[The Guard]
 * xref:guide-rest-client.adoc[Testing a failing REST dependency]
 * xref:guide-database.adoc[Testing a failing database]

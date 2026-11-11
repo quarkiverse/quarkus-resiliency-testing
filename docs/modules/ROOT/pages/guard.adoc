@@ -75,6 +75,17 @@ A reactive pool with `max-wait-queue-size=0` has none either, since it turns cal
 Nor has a pool whose callers wait less than ten milliseconds, an Agroal `acquisition-timeout` or a reactive `connection-timeout` under that: a caller is seen while it waits, and such a wait is too short to be seen reliably.
 An exhaustion the guard cannot watch is reported as _not judged_, as `unavailable` and `connect-timeout` are.
 
+[#jvm-faults]
+== A Full Disk and Unresolvable Hosts
+
+These faults are judged by whether what they fail was attempted while they were active:
+
+* For `directory(path).diskFull()`, a write to a file under the directory
+* For `host(name).unresolvable()`, a lookup of the name
+* For `target(...).unresolvable()`, an attempt to connect to the target; a request that went over a connection opened before the fault does not count, and `dropConnections()` before the fault closes those
+
+If nothing was, the test fails with the same `Fault had no effect:` heading.
+
 == After Each Test
 
 The guard and the cleanup run after each `@QuarkusTest` with the `quarkus-resiliency-testing-junit` module on the classpath, with or without `NetworkFaultsProfile`: every fault is ended and its consequences are undone, which means Agroal pools are flushed and SmallRye Fault Tolerance circuit breakers are reset, all of it after the last exhaustion has ended.
