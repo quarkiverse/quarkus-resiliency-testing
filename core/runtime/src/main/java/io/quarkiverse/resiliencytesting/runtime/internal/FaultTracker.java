@@ -13,6 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.resiliencytesting.ActiveFault;
+import io.quarkiverse.resiliencytesting.runtime.internal.jvm.RuleFault;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyTarget;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyTarget.FaultHandle;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyTarget.Outcome;
@@ -47,6 +48,10 @@ import io.quarkiverse.resiliencytesting.spi.ResourceTarget;
  * An exhaustion is a fault with no proxy: its guard is whether anything waited for the resource while it was held,
  * and a resource whose waiters cannot be observed is not judged. It settles the same way, and it is recorded and
  * reported the same way.
+ * <p>
+ * A fault made of rules injected into the JVM, a directory whose disk is full or an unresolvable host, has no proxy either: its
+ * guard is
+ * whether any of its rules fired while it was active.
  */
 public final class FaultTracker {
 
@@ -56,6 +61,8 @@ public final class FaultTracker {
     private final Set<Group> active = new LinkedHashSet<>();
     // target name -> the exhaustion holding it
     private final Map<String, ResourceFault> exhausted = new LinkedHashMap<>();
+    // subject -> the rule fault on it
+    private final Map<String, InjectedFault> injected = new LinkedHashMap<>();
     private final List<String> violations = new ArrayList<>();
     private final List<FaultListener> listeners = new CopyOnWriteArrayList<>();
 
@@ -137,6 +144,80 @@ public final class FaultTracker {
     }
 
     /**
+     * A fault made of rules as the test sees it: ending it takes the rules out and settles the fault.
+     */
+    private final class InjectedFault implements ActiveFault {
+        private final RuleFault fault;
+        // the proxies an unresolvable target stands for; none for a directory or a host
+        private final List<ProxyTarget> members;
+        private final FaultRecord record;
+
+        private InjectedFault(RuleFault fault, List<ProxyTarget> members) {
+            this.fault = fault;
+            this.members = members;
+            this.record = new FaultRecord(Instant.now(), List.of(fault.subject()), fault.description());
+        }
+
+        /**
+         * Takes the subject, then puts the rules in place. Synchronized as {@link #end()} is: an end that finds the
+         * fault in the map waits until it is applied.
+         */
+        private synchronized void apply() {
+            String subject = fault.subject();
+            synchronized (FaultTracker.this) {
+                if (injected.containsKey(subject)) {
+                    throw new IllegalStateException(subject + " already has the '" + fault.description()
+                            + "' fault active: end it before applying another");
+                }
+                for (ProxyTarget member : members) {
+                    String active = injectedFaultOn(member);
+                    if (active != null) {
+                        throw new IllegalStateException("Target " + member.name() + " already has the '" + active
+                                + "' fault active: end it before applying another");
+                    }
+                }
+                injected.put(subject, this);
+            }
+            try {
+                fault.apply();
+            } catch (RuntimeException | Error e) {
+                synchronized (FaultTracker.this) {
+                    injected.remove(subject, this);
+                }
+                throw e;
+            }
+            // told before the monitor is given up, so a concurrent end cannot reach a listener ahead of the start
+            notifyStarted(record);
+        }
+
+        @Override
+        public synchronized void end() {
+            boolean clean;
+            synchronized (FaultTracker.this) {
+                if (!injected.remove(fault.subject(), this)) {
+                    return;
+                }
+                clean = exhausted.isEmpty();
+            }
+            try {
+                fault.remove();
+            } finally {
+                if (clean) {
+                    cleanUp();
+                }
+                boolean triggered = fault.triggered();
+                if (!triggered) {
+                    synchronized (FaultTracker.this) {
+                        violations.add(fault.untriggered());
+                    }
+                }
+                FaultEnd.Verdict verdict = triggered ? FaultEnd.Verdict.SAW_TRAFFIC : FaultEnd.Verdict.NO_TRAFFIC;
+                notifyEnded(record, new FaultEnd(Instant.now(), verdict, 0, 0));
+            }
+        }
+    }
+
+    /**
      * Tells {@code listener} of every fault that starts or ends from now on.
      */
     void addListener(FaultListener listener) {
@@ -156,7 +237,7 @@ public final class FaultTracker {
     /**
      * Takes the whole of {@code resource} as a fault on {@code targetName}. Recorded only once it is held, so a take
      * that fails leaves nothing behind. A target with a network fault is refused: its traffic would never reach the
-     * wire the fault sits on.
+     * wire the fault sits on. So is one that is unresolvable: nothing would ask its pool for a connection.
      */
     ActiveFault trackExhaustion(String targetName, ResourceTarget resource) {
         synchronized (this) {
@@ -168,6 +249,15 @@ public final class FaultTracker {
                 throw new IllegalStateException("Target " + targetName + " has an active network fault, which an"
                         + " exhausted target would never meet; end that fault before exhausting it");
             }
+            for (InjectedFault fault : injected.values()) {
+                for (ProxyTarget member : fault.members) {
+                    if (member.name().equals(targetName)) {
+                        throw new IllegalStateException("Target " + targetName + " is " + fault.fault.description()
+                                + ", which an exhausted target would never meet; end that fault before exhausting"
+                                + " it");
+                    }
+                }
+            }
         }
         ResourceFault fault = new ResourceFault(targetName, resource.exhaust());
         // told before the fault is active, so a concurrent end cannot reach a listener ahead of the start
@@ -176,6 +266,38 @@ public final class FaultTracker {
             exhausted.put(targetName, fault);
         }
         return fault;
+    }
+
+    /**
+     * Applies {@code fault}, which acts on no target, and follows it; see {@link #trackInjected(RuleFault, List)}.
+     */
+    ActiveFault trackInjected(RuleFault fault) {
+        return trackInjected(fault, List.of());
+    }
+
+    /**
+     * Applies {@code fault} and follows it. A subject takes one such fault at a time, and so does each of
+     * {@code members}, the proxies the fault acts on, whichever target they were reached through. The subject is
+     * taken before the rules are put in place, so of two threads applying the same fault one is refused, and given
+     * back if they cannot be, so a fault that could not be applied leaves nothing behind.
+     */
+    ActiveFault trackInjected(RuleFault fault, List<ProxyTarget> members) {
+        InjectedFault tracked = new InjectedFault(fault, members);
+        tracked.apply();
+        return tracked;
+    }
+
+    /**
+     * What the fault made of rules that acts on {@code target} does to it, {@code unresolvable}; null when there is
+     * none.
+     */
+    synchronized String injectedFaultOn(ProxyTarget target) {
+        for (InjectedFault other : injected.values()) {
+            if (other.members.contains(target)) {
+                return other.fault.description();
+            }
+        }
+        return null;
     }
 
     /**
@@ -297,6 +419,7 @@ public final class FaultTracker {
         synchronized (this) {
             faults = new ArrayList<>(active);
             faults.addAll(exhausted.values());
+            faults.addAll(injected.values());
         }
         endEach(faults);
     }
@@ -326,7 +449,8 @@ public final class FaultTracker {
     }
 
     /**
-     * Ends every fault still active on any of {@code targets}, settling each one. A fault on a composite target ends
+     * Ends every fault still active on any of {@code targets}, a fault made of rules included, settling each one. A fault on a
+     * composite target ends
      * as a whole as soon as one of its members is among them.
      */
     void endOn(List<ProxyTarget> targets) {
@@ -344,13 +468,27 @@ public final class FaultTracker {
         for (Group g : groups) {
             g.end();
         }
+        List<InjectedFault> rules = new ArrayList<>();
+        synchronized (this) {
+            for (InjectedFault fault : injected.values()) {
+                for (ProxyTarget member : fault.members) {
+                    if (targets.contains(member)) {
+                        rules.add(fault);
+                        break;
+                    }
+                }
+            }
+        }
+        for (InjectedFault fault : rules) {
+            fault.end();
+        }
     }
 
     /**
      * How many faults are active right now.
      */
     synchronized int activeCount() {
-        return active.size() + exhausted.size();
+        return active.size() + exhausted.size() + injected.size();
     }
 
     /**

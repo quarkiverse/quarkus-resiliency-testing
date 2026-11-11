@@ -67,6 +67,19 @@ class CompositeEndpoint implements Endpoint {
     }
 
     /**
+     * An unresolvable member takes no network fault: nothing connects to it, so the fault would meet nothing.
+     */
+    void requireResolvable() {
+        for (ProxyTarget t : members) {
+            String injected = tracker.injectedFaultOn(t);
+            if (injected != null) {
+                throw new IllegalStateException("Target " + t.name() + " is " + injected + ", so nothing connects to"
+                        + " it and a fault there would meet nothing; end that fault before applying another");
+            }
+        }
+    }
+
+    /**
      * Applies one fault to every member, tracked as a single fault. A fault on some members only would be half a
      * fault, so every member is checked before any is touched.
      */
@@ -78,6 +91,7 @@ class CompositeEndpoint implements Endpoint {
         if (replacing && scope.isAll()) {
             tracker.endOn(members);
         }
+        requireResolvable();
         for (ProxyTarget t : members) {
             t.requireCanApply(scope);
         }

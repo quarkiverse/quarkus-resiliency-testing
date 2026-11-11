@@ -160,6 +160,22 @@ Eight more samples under `samples/` each reproduce an overload incident, in the 
 | `blocking-on-event-loop` | A `Uni` endpoint makes a JDBC call on the event loop | `@Blocking` |
 | `reactive-wait-queue` | No `max-wait-queue-size`: a query waits thirty seconds for a connection | `quarkus.datasource.reactive.max-wait-queue-size` |
 
+## A full disk and DNS failures, too
+
+A full disk and a host name that does not resolve never reach a connection, so they are failed
+inside the JVM instead, with the exception the real failure gives:
+
+```java
+try (var ignored = faults.directory(Path.of("/var/data")).diskFull()) {
+    given().body("report").post("/reports").then().statusCode(507);
+}
+try (var ignored = faults.target(InventoryClient.class).unresolvable()) {
+    when().post("/orders").then().statusCode(503);
+}
+```
+
+`directory(...)` and `host(...)` need no `NetworkFaultsProfile`, and there is nothing to add to the build.
+
 ## See it before you test it
 
 In dev mode the **Resiliency Testing** card in the Dev UI lists every target of the running
@@ -298,6 +314,7 @@ addresses one by the bean the application injects.
 | Reactive datasource | `target(Pool.class)` |
 | Hibernate ORM, Hibernate Reactive, Quarkus Data, Jakarta Data | `target(EntityManager.class)`, `target(Mutiny.SessionFactory.class)` or the repository type, resolved to the datasource behind it |
 | Connection pools and threads | `pool(DataSource.class).exhausted()`, `pool(Pool.class).exhausted()`, `workerPool().exhausted()` for the worker pool, `eventLoops().watched()` for blocked event loops; no profile needed |
+| Disk and DNS | `directory(path).diskFull()` for a full disk under one directory, `host(name).unresolvable()` for a name the application looks up; no profile needed. `target(...).unresolvable()` for a proxied dependency |
 | REST Client | `target(InventoryClient.class)`, the interface; `target(InventoryClient::reserve)` for one method's requests |
 | Redis | `target(RedisDataSource.class)`, or the Vert.x clients; standalone mode |
 | MongoDB | `target(MongoClient.class)` or the reactive client; standalone servers |
@@ -336,6 +353,11 @@ Quarkus Fleet Test, which runs the packaged application behind a load balancer.
 - TLS passes through but certificates must accept `127.0.0.1`; request counting and the HTTP
   faults need plaintext HTTP/1.x.
 - No `@QuarkusIntegrationTest` support.
+- `directory(...).diskFull()`, `host(...).unresolvable()` and `target(...).unresolvable()` rewrite classes
+  of the running JVM, through an agent loaded the first time one of them is used. The Quarkus
+  Maven plugin passes the JVM option that allows it (`-XX:+EnableDynamicAgentLoading`) to the
+  tests; a Gradle build or an IDE run without it gets a warning from the JDK. They do not reach
+  writes made by native code, nor clients on a native transport (epoll, io_uring).
 - Faults that fire at random or on a clock were left out on purpose: a test that fails one run
   in twenty is worse than no test. `forFirst`, `every` and `after` give the same scenarios a
   deterministic shape.

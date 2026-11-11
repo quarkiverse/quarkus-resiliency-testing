@@ -3,12 +3,15 @@ package io.quarkiverse.resiliencytesting.runtime.internal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import io.quarkiverse.resiliencytesting.ActiveFault;
 import io.quarkiverse.resiliencytesting.TargetTraffic;
+import io.quarkiverse.resiliencytesting.runtime.internal.jvm.RuleFault;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyTarget;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.RequestScope;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.fault.ConnectTimeoutFault;
@@ -65,6 +68,21 @@ final class CompositeTarget extends CompositeEndpoint implements ObservableTarge
     }
 
     @Override
+    public ActiveFault unresolvable() {
+        // under either the application would not get as far as connecting, so the fault would meet nothing
+        requireNotExhausted();
+        if (replacing) {
+            tracker.endOn(members);
+        }
+        Map<Integer, String> hostsByProxyPort = new LinkedHashMap<>();
+        for (ProxyTarget t : members) {
+            t.requireCanApply(RequestScope.ALL);
+            hostsByProxyPort.put(t.port(), t.upstream().host());
+        }
+        return tracker.trackInjected(RuleFault.unresolvableTarget(name, hostsByProxyPort), members);
+    }
+
+    @Override
     public void dropConnections() {
         requireNotExhausted();
         for (ProxyTarget t : members) {
@@ -76,7 +94,9 @@ final class CompositeTarget extends CompositeEndpoint implements ObservableTarge
     public String currentFault() {
         Set<String> faults = new LinkedHashSet<>();
         for (ProxyTarget t : members) {
-            faults.add(t.currentFault());
+            // a member takes no network fault while it is unresolvable, so it has the one or the other
+            String injected = tracker.injectedFaultOn(t);
+            faults.add(injected != null ? injected : t.currentFault());
         }
         return String.join(", ", faults);
     }

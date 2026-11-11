@@ -2,6 +2,7 @@ package io.quarkiverse.resiliencytesting.runtime.internal;
 
 import java.io.Serializable;
 import java.lang.annotation.Annotation;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -13,12 +14,16 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import jakarta.enterprise.inject.Instance;
 
+import io.netty.util.NetUtil;
 import io.quarkiverse.resiliencytesting.ActiveFault;
+import io.quarkiverse.resiliencytesting.Directory;
 import io.quarkiverse.resiliencytesting.Endpoint;
 import io.quarkiverse.resiliencytesting.EventLoops;
 import io.quarkiverse.resiliencytesting.Exhaustible;
 import io.quarkiverse.resiliencytesting.Faults;
+import io.quarkiverse.resiliencytesting.Host;
 import io.quarkiverse.resiliencytesting.MethodReference;
+import io.quarkiverse.resiliencytesting.runtime.internal.jvm.RuleFault;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyRegistry;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyTarget;
 import io.quarkiverse.resiliencytesting.spi.BeanTargetResolver;
@@ -266,6 +271,62 @@ public final class FaultsImpl implements Faults {
     @Override
     public Exhaustible workerPool() {
         return new Pool(WorkerPool.NAME, new WorkerPool());
+    }
+
+    @Override
+    public Directory directory(Path path) {
+        return new PathDirectory(path);
+    }
+
+    /**
+     * A directory as handed to tests. A fault is applied once, so each {@code diskFull()} gets rules of its own.
+     */
+    private final class PathDirectory implements Directory {
+        private final Path directory;
+
+        private PathDirectory(Path directory) {
+            this.directory = directory;
+        }
+
+        @Override
+        public String name() {
+            return RuleFault.diskFull(directory).subject();
+        }
+
+        @Override
+        public ActiveFault diskFull() {
+            return tracker.trackInjected(RuleFault.diskFull(directory));
+        }
+    }
+
+    @Override
+    public Host host(String name) {
+        if (NetUtil.isValidIpV4Address(name) || NetUtil.isValidIpV6Address(name)) {
+            throw new IllegalArgumentException(name + " is an IP address, which is never looked up; only a host name"
+                    + " can be made unresolvable");
+        }
+        return new NamedHost(name);
+    }
+
+    /**
+     * A host name as handed to tests. A fault is applied once, so each {@code unresolvable()} gets rules of its own.
+     */
+    private final class NamedHost implements Host {
+        private final String host;
+
+        private NamedHost(String host) {
+            this.host = host;
+        }
+
+        @Override
+        public String name() {
+            return RuleFault.unresolvableHost(host).subject();
+        }
+
+        @Override
+        public ActiveFault unresolvable() {
+            return tracker.trackInjected(RuleFault.unresolvableHost(host));
+        }
     }
 
     @Override

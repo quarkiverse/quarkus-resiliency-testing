@@ -29,6 +29,22 @@
             <groupId>io.vertx</groupId>
             <artifactId>vertx-core</artifactId>
         </dependency>
+        <!-- the client that sends rules to the Byteman agent; the agent itself is a resource of this jar, see below -->
+        <dependency>
+            <groupId>org.jboss.byteman</groupId>
+            <artifactId>byteman-submit</artifactId>
+            <version>${byteman.version}</version>
+        </dependency>
+        <!-- the engine alone, not the Qute extension: the rules sent to the agent are templates -->
+        <dependency>
+            <groupId>io.quarkus.qute</groupId>
+            <artifactId>qute-core</artifactId>
+        </dependency>
+        <!-- loads the agent into the running JVM -->
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -43,6 +59,32 @@
 
     <build>
         <plugins>
+            <!-- The Byteman agent, as a resource rather than a dependency: it puts itself on the boot class path,
+                 and a copy on the application's class path would be loaded a second time by the Quarkus class
+                 loader, as classes that know none of the rules. -->
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>embed-byteman-agent</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.jboss.byteman</groupId>
+                                    <artifactId>byteman</artifactId>
+                                    <version>${byteman.version}</version>
+                                    <outputDirectory>${project.build.outputDirectory}/META-INF/quarkus-resiliency-testing</outputDirectory>
+                                    <destFileName>byteman.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>io.quarkus</groupId>
                 <artifactId>quarkus-extension-maven-plugin</artifactId>

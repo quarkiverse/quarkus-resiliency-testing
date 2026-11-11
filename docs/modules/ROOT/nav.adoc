@@ -11,6 +11,7 @@
 * xref:guide-pool-exhaustion.adoc[Testing pool exhaustion]
 * xref:guide-overload.adoc[Testing overload]
 * xref:guide-backpressure.adoc[Testing backpressure]
+* xref:guide-disk-and-dns.adoc[Testing a full disk and DNS failures]
 * xref:guide-fault-tolerance.adoc[Fault Tolerance]
 * xref:guide-langchain4j.adoc[Testing Quarkus LangChain4j models]
 * xref:samples.adoc[Incidents, reproduced]

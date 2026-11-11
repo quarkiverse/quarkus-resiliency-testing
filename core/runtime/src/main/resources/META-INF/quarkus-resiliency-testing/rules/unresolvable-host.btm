@@ -1,0 +1,38 @@
+{! Looking up {host} fails as it does when no name server knows it.
+
+   "host: Name or service not known" is how the JDK words its UnknownHostException, after what the resolver of the
+   C library says of a name it does not know. $1 is the name looked up.
+
+   Every rule records that it fired by setting the system property {hit}. !}
+
+# every lookup of the JDK: getByName, the InetSocketAddress and Socket constructors
+RULE {fault} InetAddress.getAllByName
+CLASS java.net.InetAddress
+METHOD getAllByName(java.lang.String)
+AT ENTRY
+IF $1 != null && $1.equalsIgnoreCase("{host}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.net.UnknownHostException($1 + ": Name or service not known")
+ENDRULE
+{#include hide-frames of="InetAddress.getAllByName" type="java.net.InetAddress" method="getAllByName(java.lang.String)" /}
+
+# every resolver of Netty, the one Vert.x uses among them; ^ is the class and every class that extends it
+RULE {fault} Netty doResolve
+CLASS ^io.netty.resolver.SimpleNameResolver
+METHOD doResolve(java.lang.String, io.netty.util.concurrent.Promise)
+AT ENTRY
+IF $1 != null && $1.equalsIgnoreCase("{host}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.net.UnknownHostException($1 + ": Name or service not known")
+ENDRULE
+{#include hide-frames of="Netty doResolve" type="^io.netty.resolver.SimpleNameResolver" method="doResolve(java.lang.String, io.netty.util.concurrent.Promise)" /}
+
+RULE {fault} Netty doResolveAll
+CLASS ^io.netty.resolver.SimpleNameResolver
+METHOD doResolveAll(java.lang.String, io.netty.util.concurrent.Promise)
+AT ENTRY
+IF $1 != null && $1.equalsIgnoreCase("{host}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.net.UnknownHostException($1 + ": Name or service not known")
+ENDRULE
+{#include hide-frames of="Netty doResolveAll" type="^io.netty.resolver.SimpleNameResolver" method="doResolveAll(java.lang.String, io.netty.util.concurrent.Promise)" /}

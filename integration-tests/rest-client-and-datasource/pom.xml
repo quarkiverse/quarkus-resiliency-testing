@@ -46,4 +46,22 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <!-- generate-code-tests is what passes the JVM options the extension asks for to the tests, as in a
+                 generated application: without it the disk and DNS faults work, with a warning from the JDK -->
+            <plugin>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>generate-code-tests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>

@@ -1,0 +1,73 @@
+{! Writes to the files under {directory} fail as they do when the disk is full.
+
+   "No space left on device" is what strerror(ENOSPC) says, which is the message of the IOException a write to a
+   full disk fails with on Linux and macOS.
+
+   $0.path is the path a stream or channel was opened with, as the application gave it, so it is made absolute
+   before it is compared. A stream on a file descriptor, standard output for one, has none.
+
+   Every rule records that it fired by setting the system property {hit}. !}
+
+# every write of a FileOutputStream, and with it of a FileWriter or a PrintStream on a file
+RULE {fault} FileOutputStream.write
+CLASS java.io.FileOutputStream
+METHOD write
+AT ENTRY
+IF $0.path != null && (new java.io.File($0.path)).toPath().toAbsolutePath().normalize().startsWith("{directory}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.io.IOException("No space left on device")
+ENDRULE
+{#include hide-frames of="FileOutputStream.write" type="java.io.FileOutputStream" method="write" /}
+
+RULE {fault} RandomAccessFile.write
+CLASS java.io.RandomAccessFile
+METHOD write
+AT ENTRY
+IF $0.path != null && (new java.io.File($0.path)).toPath().toAbsolutePath().normalize().startsWith("{directory}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.io.IOException("No space left on device")
+ENDRULE
+{#include hide-frames of="RandomAccessFile.write" type="java.io.RandomAccessFile" method="write" /}
+
+# the writes of a RandomAccessFile that do not go through write: writeBytes and writeChars
+RULE {fault} RandomAccessFile.writeBytes
+CLASS java.io.RandomAccessFile
+METHOD writeBytes
+AT ENTRY
+IF $0.path != null && (new java.io.File($0.path)).toPath().toAbsolutePath().normalize().startsWith("{directory}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.io.IOException("No space left on device")
+ENDRULE
+{#include hide-frames of="RandomAccessFile.writeBytes" type="java.io.RandomAccessFile" method="writeBytes" /}
+
+# every write of a FileChannel, and with it Files.write, Files.newOutputStream and Files.newBufferedWriter
+RULE {fault} FileChannel.write
+CLASS sun.nio.ch.FileChannelImpl
+METHOD write
+AT ENTRY
+IF $0.path != null && (new java.io.File($0.path)).toPath().toAbsolutePath().normalize().startsWith("{directory}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.io.IOException("No space left on device")
+ENDRULE
+{#include hide-frames of="FileChannel.write" type="sun.nio.ch.FileChannelImpl" method="write" /}
+
+RULE {fault} FileChannel.transferFrom
+CLASS sun.nio.ch.FileChannelImpl
+METHOD transferFrom
+AT ENTRY
+IF $0.path != null && (new java.io.File($0.path)).toPath().toAbsolutePath().normalize().startsWith("{directory}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.io.IOException("No space left on device")
+ENDRULE
+{#include hide-frames of="FileChannel.transferFrom" type="sun.nio.ch.FileChannelImpl" method="transferFrom" /}
+
+# copies a file in native code, without a channel; $2 is the file copied to
+RULE {fault} Files.copy
+CLASS java.nio.file.Files
+METHOD copy(java.nio.file.Path, java.nio.file.Path, java.nio.file.CopyOption[])
+AT ENTRY
+IF $2.toAbsolutePath().normalize().startsWith("{directory}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.nio.file.FileSystemException($2.toString(), null, "No space left on device")
+ENDRULE
+{#include hide-frames of="Files.copy" type="java.nio.file.Files" method="copy(java.nio.file.Path, java.nio.file.Path, java.nio.file.CopyOption[])" /}

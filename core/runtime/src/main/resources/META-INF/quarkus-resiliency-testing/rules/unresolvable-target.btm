@@ -1,0 +1,45 @@
+{! Connecting to the proxies of a target fails as connecting to the host behind each does when its name does not
+   resolve. The application reaches a proxied target by the address of its proxy, so it looks no name up; the
+   failure is raised where its lookup would have failed, before a connection is made.
+
+   $1 is the address connected to. An InetSocketAddress prints as hostname/address:port, with an empty host name
+   when it has none, so both forms end with /{proxyHost}:port.
+
+   Every rule that throws records that it fired by setting the system property {hit}, and is followed by one that,
+   on the way out of the method, takes the frames of the agent off the exception; see hide-frames.btm. !}
+{#for proxy in proxies}
+
+# the channels of java.nio, which Netty and with it Vert.x connect through
+RULE {fault} SocketChannel.connect to {proxy.port}
+CLASS sun.nio.ch.SocketChannelImpl
+METHOD connect(java.net.SocketAddress)
+AT ENTRY
+IF $1.toString().endsWith("/{proxyHost}:{proxy.port}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.net.UnknownHostException("{proxy.host}: Name or service not known")
+ENDRULE
+RULE {fault} SocketChannel.connect to {proxy.port}: hide the frames of the agent
+CLASS sun.nio.ch.SocketChannelImpl
+METHOD connect(java.net.SocketAddress)
+AT EXCEPTION EXIT
+IF true
+DO io.quarkiverse.resiliencytesting.runtime.internal.jvm.InjectedFrames.hide($^)
+ENDRULE
+
+# the sockets of java.net, which JDBC drivers connect through
+RULE {fault} Socket.connect to {proxy.port}
+CLASS sun.nio.ch.NioSocketImpl
+METHOD connect(java.net.SocketAddress, int)
+AT ENTRY
+IF $1.toString().endsWith("/{proxyHost}:{proxy.port}")
+DO java.lang.System.setProperty("{hit}", "true");
+   throw new java.net.UnknownHostException("{proxy.host}: Name or service not known")
+ENDRULE
+RULE {fault} Socket.connect to {proxy.port}: hide the frames of the agent
+CLASS sun.nio.ch.NioSocketImpl
+METHOD connect(java.net.SocketAddress, int)
+AT EXCEPTION EXIT
+IF true
+DO io.quarkiverse.resiliencytesting.runtime.internal.jvm.InjectedFrames.hide($^)
+ENDRULE
+{/for}

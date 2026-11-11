@@ -1,6 +1,7 @@
 package io.quarkiverse.resiliencytesting;
 
 import java.lang.annotation.Annotation;
+import java.nio.file.Path;
 import java.util.Set;
 
 import jakarta.enterprise.inject.Instance;
@@ -34,6 +35,9 @@ import jakarta.enterprise.inject.Instance;
  * {@link #workerPool()} and {@link #eventLoops()} work in any {@code @QuarkusTest}. A pool is addressed like a
  * target, by the bean the application uses it through, and a bean with a pool behind a connection, such as a
  * datasource, is both.
+ * <p>
+ * What fails inside the JVM rather than on a connection needs no profile either: {@code directory(path).diskFull()} fails
+ * the writes to the files under a directory, and {@code host(name).unresolvable()} the lookups of a host name.
  * <p>
  * The requests one method of a bean sends are addressed by a method reference, {@code target(InventoryClient::reserve)},
  * and make an {@link Endpoint}: faults on it leave the rest of the target alone.
@@ -133,6 +137,22 @@ public interface Faults {
      * @throws IllegalStateException if the application has no Vert.x
      */
     EventLoops eventLoops();
+
+    /**
+     * The files under {@code path}, whose writes a test can fail as a full disk does:
+     * {@code directory(Path.of("/var/data")).diskFull()}. The directory need not exist yet. It needs no
+     * {@code NetworkFaultsProfile}.
+     */
+    Directory directory(Path path);
+
+    /**
+     * A host name the application looks up, which a test can make unresolvable:
+     * {@code host("inventory.example.com").unresolvable()}. It needs no {@code NetworkFaultsProfile}; a dependency
+     * the profile put behind a proxy is not looked up by name, and takes {@link Target#unresolvable()} instead.
+     *
+     * @throws IllegalArgumentException if {@code name} is an IP address, which is never looked up
+     */
+    Host host(String name);
 
     /**
      * Every known target at once, for "everything is down" tests.
