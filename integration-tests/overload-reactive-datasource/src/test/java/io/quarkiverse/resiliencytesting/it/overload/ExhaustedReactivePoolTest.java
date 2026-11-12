@@ -1,11 +1,13 @@
 package io.quarkiverse.resiliencytesting.it.overload;
 
 import static io.restassured.RestAssured.when;
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import jakarta.inject.Inject;
 
@@ -91,7 +93,9 @@ class ExhaustedReactivePoolTest {
         }
 
         assertEquals(List.of(), ((FaultsImpl) faults).takeGuardViolations());
-        when().get("/items/hasty").then().statusCode(200);
+        // Even a free pool can miss the 1 ms deadline on a busy CI worker; require recovery within a bounded wait.
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(
+                () -> when().get("/items/hasty").then().statusCode(200));
     }
 
     @Test

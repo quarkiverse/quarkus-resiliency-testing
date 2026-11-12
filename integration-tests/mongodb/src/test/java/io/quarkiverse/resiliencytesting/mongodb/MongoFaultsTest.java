@@ -1,6 +1,7 @@
 package io.quarkiverse.resiliencytesting.mongodb;
 
 import static io.restassured.RestAssured.when;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -60,8 +61,9 @@ public class MongoFaultsTest {
             long ms = Stopwatch.millis(() -> when()
                     .get("/books/count")
                     .then()
-                    .statusCode(503));
-            assertTrue(ms < 6_000, "expected read-timeout=2s to bound the wait, took " + ms + "ms");
+                    .statusCode(503)
+                    .body(containsString("MongoSocketReadTimeoutException")));
+            assertTrue(ms < 4_000, "expected read-timeout=2s with retries disabled to bound the wait, took " + ms + "ms");
         }
 
         when()
