@@ -28,7 +28,6 @@ import io.quarkiverse.resiliencytesting.spi.TargetName;
 import io.quarkus.arc.deployment.SyntheticBeanBuildItem;
 import io.quarkus.data.hibernate.RepositorySwitcher;
 import io.quarkus.data.hibernate.managed.reactive.ReactiveManagedRepositoryBase;
-import io.quarkus.data.hibernate.stateless.reactive.ReactiveRecordRepositoryBase;
 import io.quarkus.datasource.common.runtime.DataSourceUtil;
 import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildStep;
@@ -45,9 +44,7 @@ class DataRepositoryTargetsProcessor {
 
     private static final DotName REPOSITORY_SWITCHER = DotName.createSimple(RepositorySwitcher.class);
     // what a reactive Quarkus Data repository implements
-    private static final List<DotName> REACTIVE_REPOSITORIES = List.of(
-            DotName.createSimple(ReactiveManagedRepositoryBase.class),
-            DotName.createSimple(ReactiveRecordRepositoryBase.class));
+    private static final DotName REACTIVE_REPOSITORY = DotName.createSimple(ReactiveManagedRepositoryBase.class);
     private static final DotName JAKARTA_DATA_REPOSITORY = DotName.createSimple(Repository.class);
     // Hibernate's processor implements a Jakarta Data repository interface in a class of the interface's name plus this
     private static final String GENERATED_SUFFIX = "_";
@@ -80,10 +77,8 @@ class DataRepositoryTargetsProcessor {
         }
         IndexView view = index.getIndex();
         Set<DotName> reactiveRepositories = new HashSet<>();
-        for (DotName reactive : REACTIVE_REPOSITORIES) {
-            for (ClassInfo impl : view.getAllKnownImplementations(reactive)) {
-                reactiveRepositories.add(impl.name());
-            }
+        for (ClassInfo impl : view.getAllKnownImplementations(REACTIVE_REPOSITORY)) {
+            reactiveRepositories.add(impl.name());
         }
         Map<String, TargetName> repositories = new HashMap<>();
 
