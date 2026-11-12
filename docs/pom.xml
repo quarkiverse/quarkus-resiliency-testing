@@ -15,7 +15,7 @@
     </properties>
 
     <dependencies>
-        <!-- Make sure the doc is built after the other artifacts -->
+        <!-- Build the core artifacts first so their configuration metadata is available to the config-doc plugin. -->
         <dependency>
             <groupId>io.quarkiverse.resiliencytesting</groupId>
             <artifactId>quarkus-resiliency-testing-deployment</artifactId>
@@ -26,18 +26,8 @@
     <build>
         <sourceDirectory>modules/ROOT/examples</sourceDirectory>
         <plugins>
-            <plugin>
-                <groupId>io.quarkus</groupId>
-                <artifactId>quarkus-maven-plugin</artifactId>
-                <extensions>true</extensions>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>build</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
+            <!-- This module generates documentation, not an application. Quarkus augmentation would also resolve
+                 conditional extensions that are outside the release workflow's -pl docs -am reactor. -->
             <plugin>
                 <groupId>it.ozimov</groupId>
                 <artifactId>yaml-properties-maven-plugin</artifactId>
