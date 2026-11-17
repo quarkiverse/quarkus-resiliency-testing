@@ -150,6 +150,26 @@ NOTE: A registry name such as `datasource:<default>:jdbc` cannot be used to sele
 |`cxf:<name>`
 |===
 
+[#application-supplied-clients]
+== REST Clients the Application Builds Itself
+
+A REST Client built in code, with `QuarkusRestClientBuilder` or `RestClientBuilder`, has no configuration property to recognise: its address is only handed to the builder.
+It is proxied nevertheless, as `rest-client:<configKey or simple class name>`, and addressed by its interface, which needs no `@RegisterRestClient`:
+
+[source,java]
+----
+Target pricing = faults.target(QuoteClient.class);
+----
+
+The client is proxied while it is built, through a `RestClientListener`, so its target appears when the application builds it and every request it sends goes through the proxy.
+A listener of the application is told about the same client and keeps working; one that sets the base URI itself, after this extension's listener has run, decides where the client connects.
+
+A client that is configured is proxied through its property and is left alone here, so it never has two targets.
+
+NOTE: The builder offers no way to read the address it holds, so it is read from a private field of `RestClientBuilderImpl`; nothing is written that way. A version of Quarkus that renames the field stops this from working: the log then names the class and the field and where the class was loaded from.
+
+Clients of other kinds that are built in code, such as an MCP client or a Vert.x `WebClient`, are not proxied.
+
 `Faults` itself knows nothing about datasources or REST Clients.
 Each technology module holds its descriptors and its `BeanTargetResolver`, so a new extension brings both; see xref:extending.adoc[Declaring Targets from Another Extension].
 
@@ -157,7 +177,7 @@ Each technology module holds its descriptors and its `BeanTargetResolver`, so a 
 
 A client is addressed by its interface, whether it was injected with the `@RestClient` qualifier or by the interface alone.
 Its URL may be configured under its `configKey`, its class name or its simple name, and all three name the same target.
-A URL that comes from `+@RegisterRestClient(baseUri = ...)+` is proxied as well.
+A URL that comes from `+@RegisterRestClient(baseUri = ...)+` is proxied as well, and so is the base URI of a client <<application-supplied-clients,built in code>>.
 
 See xref:guide-rest-client.adoc[Testing a failing REST dependency].
 

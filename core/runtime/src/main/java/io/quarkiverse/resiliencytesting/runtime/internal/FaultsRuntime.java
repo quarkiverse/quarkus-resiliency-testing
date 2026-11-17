@@ -9,7 +9,9 @@ import org.jboss.logging.Logger;
 
 import io.quarkiverse.resiliencytesting.runtime.internal.config.TargetCatalog;
 import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyRegistry;
+import io.quarkiverse.resiliencytesting.runtime.internal.proxy.ProxyTarget;
 import io.quarkiverse.resiliencytesting.spi.AddressRewriter;
+import io.quarkiverse.resiliencytesting.spi.ApplicationSuppliedClients;
 import io.quarkiverse.resiliencytesting.spi.TargetDescriptor;
 import io.quarkiverse.resiliencytesting.spi.TargetName;
 import io.quarkiverse.resiliencytesting.spi.Upstream;
@@ -66,6 +68,7 @@ public final class FaultsRuntime {
     }
 
     public static void close() {
+        ApplicationSuppliedClients.proxies(null);
         ProxyRegistry r;
         LOCK.lock();
         try {
@@ -121,6 +124,33 @@ public final class FaultsRuntime {
         TargetName name = match.targetName().substitute(
                 Map.of(TargetName.HOST, upstream.host(), TargetName.PORT, Integer.toString(upstream.port())));
         return registry().targetFor(name, upstream, match.property(), port).port();
+    }
+
+    /**
+     * Gives the clients the application builds itself, whose addresses come from the client or its builder rather
+     * than from a configuration property, their proxies from the registry; until {@link #close}.
+     */
+    public static void proxyApplicationSuppliedClients() {
+        ApplicationSuppliedClients.proxies(new ApplicationSuppliedClients.Proxies() {
+
+            @Override
+            public int proxyPort(TargetName name, Upstream upstream, String holder) {
+                return registry().targetFor(name, upstream, holder).port();
+            }
+
+            @Override
+            public boolean hasTarget(TargetName name) {
+                if (!isStarted()) {
+                    return false;
+                }
+                for (ProxyTarget target : registry().targets()) {
+                    if (name.covers(target.targetName())) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
     }
 
     /**

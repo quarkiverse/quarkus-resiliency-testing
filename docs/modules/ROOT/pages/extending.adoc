@@ -61,6 +61,35 @@ NOTE: A literal property wins over templates that need placeholders to match it,
 
 Values are rewritten the same way as the built-in ones, and the targets show up in `targetNames()` and the Dev UI under the name template.
 
+== Proxy a Client Built in Code
+
+A client the application builds itself hands its address to a builder, not to configuration.
+A module that can get at that address before the client is built, through a listener of the builder as `ApplicationSuppliedClientListener` does, passes it through `ApplicationSuppliedClients.proxied` with the name of the target and puts the answer back:
+
+[source,java]
+----
+String proxied = ApplicationSuppliedClients.proxied(name(client), url, // <1>
+        "the builder of the REST Client " + client.getSimpleName()); // <2>
+----
+
+<1> The URL of a proxy, or the same URL when it already points at one, as that of a configured client does; no second target is made then.
+<2> Shown where a configured target shows its property.
+
+The module's `BeanTargetResolver` then has to recognise the bean, for which `ApplicationSuppliedClients.hasTarget` says whether a client was given a target; `RestClientTargets` is the model.
+Keep no record of built clients in a static field: the module's classes outlive the application in dev mode.
+
+Where the address can only be had from a private field, the field is declared as a `ReflectedField`, a constant next to the reason for it:
+
+[source,java]
+----
+private static final ReflectedField<URI> BASE_URI =
+        ReflectedField.of(RestClientBuilderImpl.class, "uri", URI.class);
+----
+
+Reading it fails with an `IllegalStateException` when the class no longer has the field with that name and type; the message names the class and the field and where the class was loaded from, which is what is needed to update the constant.
+A `ReflectedField` only reads: a value is put back through the public API of the class, never by writing a field.
+Keep these to one class of the module, as `ApplicationSuppliedClientListener` does.
+
 == Resolve the Beans
 
 The extension also maps the beans the application uses to the targets with a `BeanTargetResolver`, which it provides as a CDI bean.
