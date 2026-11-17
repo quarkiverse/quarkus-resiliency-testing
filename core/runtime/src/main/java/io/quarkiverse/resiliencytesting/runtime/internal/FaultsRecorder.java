@@ -32,6 +32,7 @@ public class FaultsRecorder {
     public void register(List<TargetDescriptor> descriptors, Map<String, String> defaultProperties) {
         FaultsRuntime.registerTargets(descriptors);
         FaultsRuntime.registerDefaultProperties(defaultProperties);
+        FaultsRuntime.proxyApplicationSuppliedClients();
     }
 
     @RuntimeInit

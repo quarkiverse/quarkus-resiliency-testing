@@ -3,6 +3,7 @@ package io.quarkiverse.resiliencytesting.restclient.runtime.internal;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
+import java.net.URI;
 import java.util.Optional;
 
 import jakarta.inject.Singleton;
@@ -11,6 +12,7 @@ import jakarta.ws.rs.Path;
 
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 
+import io.quarkiverse.resiliencytesting.spi.ApplicationSuppliedClients;
 import io.quarkiverse.resiliencytesting.spi.BeanTargetResolver;
 import io.quarkiverse.resiliencytesting.spi.TargetBean;
 import io.quarkiverse.resiliencytesting.spi.TargetDescriptor;
@@ -21,7 +23,9 @@ import io.quarkiverse.resiliencytesting.spi.UrlRewriter;
 /**
  * REST Client targets, one per registered client, {@code rest-client:<configKey or simple name>}. A client's url may
  * be configured under its {@code configKey}, its class name or its simple name, and the build step names all three
- * the same, so whichever key the client resolves through reaches the same proxy.
+ * the same, so whichever key the client resolves through reaches the same proxy. A client the application builds
+ * itself has no such property: {@link ApplicationSuppliedClientListener} takes its base URI from the builder, under the name of
+ * the interface it builds.
  */
 public final class RestClientTargets {
 
@@ -47,6 +51,18 @@ public final class RestClientTargets {
     }
 
     /**
+     * The base URI a client of this interface is built with instead of the one its builder holds: that of the proxy
+     * named after the interface. The very same URI when it already is that of a proxy, as for a registered client,
+     * whose property was rewritten, or cannot be proxied.
+     */
+    static URI proxied(Class<?> client, URI baseUri) {
+        String url = baseUri.toString();
+        String proxied = ApplicationSuppliedClients.proxied(name(client), url, "the builder of the REST Client "
+                + client.getSimpleName());
+        return proxied.equals(url) ? baseUri : URI.create(proxied);
+    }
+
+    /**
      * The descriptor of the url or uri property of one config key, under the name of the client it belongs to.
      */
     public static TargetDescriptor descriptor(String key, String attribute, TargetName name) {
@@ -62,7 +78,10 @@ public final class RestClientTargets {
 
     /**
      * A bean whose type is an interface annotated with {@code @RegisterRestClient} is that client, whether it was
-     * asked for with the {@code @RestClient} qualifier or by the interface alone. A method of the interface sends the
+     * asked for with the {@code @RestClient} qualifier or by the interface alone, and so is an interface the
+     * application built a client of: one that has a target under its name. Which those are is asked of the
+     * targets rather than remembered here, where it would outlive the application in dev mode. A method of the interface sends
+     * the
      * requests its HTTP method annotation and its {@code @Path}, below the interface's own, say.
      */
     @Singleton
@@ -70,15 +89,20 @@ public final class RestClientTargets {
         @Override
         public Optional<TargetName> resolve(TargetBean bean) {
             Optional<Class<?>> client = bean.typeAnnotatedWith(RegisterRestClient.class);
-            if (client.isEmpty()) {
-                return Optional.empty();
+            if (client.isPresent()) {
+                return Optional.of(name(client.get()));
             }
-            return Optional.of(name(client.get()));
+            for (Class<?> type : bean.rawTypes()) {
+                if (isBuilt(type)) {
+                    return Optional.of(name(type));
+                }
+            }
+            return Optional.empty();
         }
 
         @Override
         public Optional<TargetRequests> requests(Class<?> type, Method method) {
-            if (!type.isAnnotationPresent(RegisterRestClient.class)) {
+            if (!type.isAnnotationPresent(RegisterRestClient.class) && !isBuilt(type)) {
                 return Optional.empty();
             }
             String httpMethod = httpMethod(method);
@@ -88,6 +112,10 @@ public final class RestClientTargets {
                         + "locator's requests are sent by the methods of the interface it returns.");
             }
             return Optional.of(new TargetRequests(name(type), httpMethod, path(type) + path(method)));
+        }
+
+        private static boolean isBuilt(Class<?> type) {
+            return type.isInterface() && ApplicationSuppliedClients.hasTarget(name(type));
         }
 
         /**
